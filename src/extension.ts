@@ -74,10 +74,13 @@ async function syncTranslationFile(newKeys: string[], phpFile: string) {
     try {
         // 读取现有的翻译文件
         const phpContent = fs.readFileSync(phpFile, 'utf8');
-        const existingData = parseExistingPhpFile(phpContent);
+        let existingData = parseExistingPhpFile(phpContent);
 
+        // 如果文件为空或无法解析，创建一个新的翻译结构
         if (!existingData) {
-            throw new Error('无法解析现有的翻译文件');
+            existingData = {
+                languages: {} // 空的语言对象
+            };
         }
 
         // 合并新的翻译键，保留现有翻译
@@ -86,7 +89,7 @@ async function syncTranslationFile(newKeys: string[], phpFile: string) {
 
         fs.writeFileSync(phpFile, newContent);
     } catch (error) {
-        throw error; // 直接抛出错误，不创建新文件
+        throw error;
     }
 }
 
@@ -94,7 +97,7 @@ function parseExistingPhpFile(content: string): TranslationData | null {
     try {
         const languages: { [key: string]: { [key: string]: string } } = {};
 
-        // 提取语言块
+        // Extract language blocks - improved regex to handle multiline content
         const languagePattern = /['"`]([^'"`]+)['"`]\s*=>\s*\[([\s\S]*?)\]/g;
         let match;
 
@@ -104,17 +107,56 @@ function parseExistingPhpFile(content: string): TranslationData | null {
 
             languages[language] = {};
 
-            // 提取翻译键值对
-            const keyPattern = /['"`]([^'"`]+)['"`]\s*=>\s*['"`]([^'"`]*)['"`]/g;
-            let keyMatch;
+            // Improved key-value extraction that properly handles nested quotes
+            // This will match the key, then find the corresponding value by counting quote pairs
+            const lines = keysBlock.split('\n');
 
-            while ((keyMatch = keyPattern.exec(keysBlock)) !== null) {
-                languages[language][keyMatch[1]] = keyMatch[2];
+            for (const line of lines) {
+                const trimmedLine = line.trim();
+                if (trimmedLine && !trimmedLine.startsWith('//') && trimmedLine !== '],') {
+                    // Match the key part
+                    const keyMatch = trimmedLine.match(/^['"`]([^'"`]+)['"`]\s*=>\s*/);
+                    if (keyMatch) {
+                        const key = keyMatch[1];
+                        const afterKey = trimmedLine.substring(keyMatch[0].length);
+
+                        // Extract the value by finding the matching quotes
+                        let value = '';
+                        const quoteChar = afterKey[0]; // First character should be quote
+
+                        if (quoteChar === '"' || quoteChar === "'" || quoteChar === '`') {
+                            let i = 1; // Start after opening quote
+                            let escaped = false;
+
+                            while (i < afterKey.length) {
+                                const char = afterKey[i];
+
+                                if (escaped) {
+                                    value += char;
+                                    escaped = false;
+                                } else if (char === '\\') {
+                                    escaped = true;
+                                } else if (char === quoteChar) {
+                                    // Found closing quote
+                                    break;
+                                } else {
+                                    value += char;
+                                }
+                                i++;
+                            }
+
+                            // Process escape sequences
+                            value = value.replace(/\\'/g, "'").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+                            languages[language][key] = value;
+                        }
+                    }
+                }
             }
         }
 
         return { languages };
     } catch (error) {
+        console.error('Error parsing PHP file:', error);
         return null;
     }
 }
@@ -122,8 +164,12 @@ function parseExistingPhpFile(content: string): TranslationData | null {
 function mergeTranslationKeys(existingData: TranslationData, newKeys: string[]): TranslationData {
     const updatedLanguages: { [key: string]: { [key: string]: string } } = {};
 
-    // 使用现有的语言设置
-    const existingLanguages = Object.keys(existingData.languages);
+    // 获取现有的语言设置，如果没有语言则使用 'ar' 作为默认
+    let existingLanguages = Object.keys(existingData.languages);
+
+    if (existingLanguages.length === 0) {
+        existingLanguages = ['ar']; // 默认使用阿拉伯语
+    }
 
     existingLanguages.forEach(lang => {
         updatedLanguages[lang] = {};
@@ -134,8 +180,8 @@ function mergeTranslationKeys(existingData: TranslationData, newKeys: string[]):
                 // 保留现有翻译
                 updatedLanguages[lang][key] = existingData.languages[lang][key];
             } else {
-                // 添加新键，英文使用键名，其他语言留空
-                updatedLanguages[lang][key] = lang === 'en' ? key : '';
+                // 添加新键，阿拉伯语和英文使用键名，其他语言留空
+                updatedLanguages[lang][key] = (lang === 'en' || lang === 'ar') ? key : '';
             }
         });
     });
@@ -157,7 +203,12 @@ function generatePhpFileFromData(data: TranslationData): string {
 
         const keys = Object.keys(data.languages[lang]).sort();
         keys.forEach(key => {
-            const value = data.languages[lang][key].replace(/'/g, "\\'");
+            // 正确处理包含单引号、双引号和HTML标签的值
+            let value = data.languages[lang][key];
+
+            // 转义反斜杠和单引号
+            value = value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
             phpContent.push(`        '${key}' => '${value}',`);
         });
 
