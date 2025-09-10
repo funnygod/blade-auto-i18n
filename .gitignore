@@ -1,0 +1,35 @@
+# Compiled output
+out/
+*.vsix
+
+# Node modules
+node_modules/
+
+# VS Code settings
+.vscode/
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# Dependency directories
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional REPL history
+.node_repl_history

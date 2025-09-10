@@ -1,0 +1,42 @@
+{
+    "name": "blade-auto-i18n",
+    "displayName": "Blade auto i18n",
+    "description": "Auto-sync Laravel translation keys from Blade files to existing translation files on save",
+    "version": "0.0.1",
+    "engines": {
+        "vscode": "^1.74.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "keywords": [
+        "laravel",
+        "blade",
+        "translation",
+        "i18n",
+        "php",
+        "auto-sync"
+    ],
+    "activationEvents": [
+        "onLanguage:php",
+        "onLanguage:blade"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {},
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./"
+    },
+    "devDependencies": {
+        "@types/vscode": "^1.74.0",
+        "@types/node": "16.x",
+        "typescript": "^4.9.4"
+    },
+    "publisher": "pipoku",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/your-username/marvel-i18n"
+    },
+    "license": "MIT"
+}
