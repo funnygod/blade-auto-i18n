@@ -47,14 +47,25 @@ async function autoGenerateTranslationFile(document: vscode.TextDocument) {
 function extractTranslationKeys(content: string): string[] {
     const translationKeys: string[] = [];
 
-    // 匹配 __('key') 和 __("key") 的正则表达式
+    // Updated patterns to handle Laravel translation with parameters
     const patterns = [
-        /\{\{\s*__\(\s*['"`]([^'"`]+)['"`]\s*\)\s*\}\}/g,  // {{ __('key') }}
-        /@lang\(\s*['"`]([^'"`]+)['"`]\s*\)/g,              // @lang('key')
-        /\{\{\s*trans\(\s*['"`]([^'"`]+)['"`]\s*\)\s*\}\}/g, // {{ trans('key') }}
-        /\{!!\s*__\(\s*['"`]([^'"`]+)['"`]\s*\)\s*!!\}/g,   // {!! __('key') !!}
-        /(?<!\w)__\(\s*['"`]([^'"`]+)['"`]\s*\)/g,          // __('key') 独立使用
-        /(?<!\w)trans\(\s*['"`]([^'"`]+)['"`]\s*\)/g        // trans('key') 独立使用
+        // {{ __('key') }} and {{ __('key', [...]) }}
+        /\{\{\s*__\(\s*['"`]([^'"`]+)['"`](?:\s*,\s*\[[^\]]*\])?\s*\)\s*\}\}/g,
+
+        // @lang('key') and @lang('key', [...])
+        /@lang\(\s*['"`]([^'"`]+)['"`](?:\s*,\s*\[[^\]]*\])?\s*\)/g,
+
+        // {{ trans('key') }} and {{ trans('key', [...]) }}
+        /\{\{\s*trans\(\s*['"`]([^'"`]+)['"`](?:\s*,\s*\[[^\]]*\])?\s*\)\s*\}\}/g,
+
+        // {!! __('key') !!} and {!! __('key', [...]) !!}
+        /\{!!\s*__\(\s*['"`]([^'"`]+)['"`](?:\s*,\s*\[[^\]]*\])?\s*\)\s*!!\}/g,
+
+        // __('key') and __('key', [...]) - standalone usage
+        /(?<!\w)__\(\s*['"`]([^'"`]+)['"`](?:\s*,\s*\[[^\]]*\])?\s*\)/g,
+
+        // trans('key') and trans('key', [...]) - standalone usage
+        /(?<!\w)trans\(\s*['"`]([^'"`]+)['"`](?:\s*,\s*\[[^\]]*\])?\s*\)/g
     ];
 
     patterns.forEach(pattern => {
