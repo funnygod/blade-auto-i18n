@@ -75,29 +75,6 @@ return [
 ];
 ```
 
-## Setup Instructions
-
-### 1. Install Dependencies
-
-```bash
-npm install
-npm install -D @types/vscode @types/node typescript
-```
-
-### 2. Compile TypeScript
-
-```bash
-npm run compile
-```
-
-### 3. Test the Extension
-
-1. Open the extension folder in VS Code
-2. Press `F5` to launch Extension Development Host
-3. Open a Laravel project in the new window
-4. Create a translation file manually
-5. Edit the corresponding Blade file and save
-
 ## Key Benefits
 
 - ⚡ **Zero Configuration**: Just save your Blade files
@@ -105,34 +82,6 @@ npm run compile
 - 🔒 **Safe**: Never overwrites existing translations
 - 🚀 **Fast**: Instant sync on save
 - 🧹 **Clean**: No unnecessary commands or UI clutter
-
-## Development
-
-### Project Structure
-
-```
-laravel-blade-translation-finder/
-├── package.json
-├── tsconfig.json
-├── src/
-│   └── extension.ts
-└── out/
-    └── extension.js (compiled)
-```
-
-### Key Functions
-
-- `autoGenerateTranslationFile()`: Main function triggered on Blade file save
-- `extractTranslationKeys()`: Parses Blade content using regex patterns
-- `syncTranslationFile()`: Merges new keys with existing translation file
-
-## Contributing
-
-Feel free to contribute by:
-
-- Adding support for more translation patterns
-- Improving the regex patterns
-- Enhancing error handling
 
 ## License
 

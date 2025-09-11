@@ -2,7 +2,7 @@
     "name": "blade-auto-i18n",
     "displayName": "Blade auto i18n",
     "description": "Auto-sync Laravel translation keys from Blade files to existing translation files on save",
-    "version": "0.0.4",
+    "version": "0.0.5",
     "engines": {
         "vscode": "^1.74.0"
     },

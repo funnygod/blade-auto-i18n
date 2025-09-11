@@ -47,38 +47,135 @@ async function autoGenerateTranslationFile(document: vscode.TextDocument) {
 function extractTranslationKeys(content: string): string[] {
     const translationKeys: string[] = [];
 
-    // Updated patterns to handle Laravel translation with parameters
+    // Helper function to extract keys from a specific pattern
+    function extractKeysFromPattern(pattern: RegExp, content: string) {
+        let match;
+        while ((match = pattern.exec(content)) !== null) {
+            // Find the opening quote after the function name
+            const afterFunc = match[0];
+            const funcName = match[1]; // __ or trans or lang
+
+            // Find where the actual quote starts
+            const quoteStart = afterFunc.indexOf('(') + 1;
+            let pos = quoteStart;
+
+            // Skip whitespace
+            while (pos < afterFunc.length && /\s/.test(afterFunc[pos])) {
+                pos++;
+            }
+
+            if (pos >= afterFunc.length) continue;
+
+            const quoteChar = afterFunc[pos]; // Get the quote character
+            if (quoteChar !== '"' && quoteChar !== "'" && quoteChar !== '`') continue;
+
+            // Extract the key by finding the matching closing quote
+            let key = '';
+            pos++; // Move past opening quote
+            let escaped = false;
+
+            while (pos < afterFunc.length) {
+                const char = afterFunc[pos];
+
+                if (escaped) {
+                    key += char;
+                    escaped = false;
+                } else if (char === '\\') {
+                    escaped = true;
+                } else if (char === quoteChar) {
+                    // Found closing quote - make sure it's not inside nested quotes
+                    break;
+                } else {
+                    key += char;
+                }
+                pos++;
+            }
+
+            if (key && !translationKeys.includes(key)) {
+                translationKeys.push(key);
+            }
+        }
+    }
+
+    // More robust patterns that capture the entire function call
     const patterns = [
-        // {{ __('key') }} and {{ __('key', [...]) }}
-        /\{\{\s*__\(\s*['"`]([^'"`]+)['"`](?:\s*,\s*\[[^\]]*\])?\s*\)\s*\}\}/g,
+        // {{ __('...') }} and {{ __('...', [...]) }}
+        /\{\{\s*(__\([^}]+\))\s*\}\}/g,
 
-        // @lang('key') and @lang('key', [...])
-        /@lang\(\s*['"`]([^'"`]+)['"`](?:\s*,\s*\[[^\]]*\])?\s*\)/g,
+        // @lang('...') and @lang('...', [...])
+        /@(lang\([^)]+\))/g,
 
-        // {{ trans('key') }} and {{ trans('key', [...]) }}
-        /\{\{\s*trans\(\s*['"`]([^'"`]+)['"`](?:\s*,\s*\[[^\]]*\])?\s*\)\s*\}\}/g,
+        // {{ trans('...') }} and {{ trans('...', [...]) }}
+        /\{\{\s*(trans\([^}]+\))\s*\}\}/g,
 
-        // {!! __('key') !!} and {!! __('key', [...]) !!}
-        /\{!!\s*__\(\s*['"`]([^'"`]+)['"`](?:\s*,\s*\[[^\]]*\])?\s*\)\s*!!\}/g,
+        // {!! __('...') !!} and {!! __('...', [...]) !!}
+        /\{!!\s*(__\([^!]+\))\s*!!\}/g,
 
-        // __('key') and __('key', [...]) - standalone usage
-        /(?<!\w)__\(\s*['"`]([^'"`]+)['"`](?:\s*,\s*\[[^\]]*\])?\s*\)/g,
+        // __('...') and __('...', [...]) - standalone usage
+        /(?<!\w)(__\([^;,\n\r]*\))/g,
 
-        // trans('key') and trans('key', [...]) - standalone usage
-        /(?<!\w)trans\(\s*['"`]([^'"`]+)['"`](?:\s*,\s*\[[^\]]*\])?\s*\)/g
+        // trans('...') and trans('...', [...]) - standalone usage
+        /(?<!\w)(trans\([^;,\n\r]*\))/g
     ];
 
+    // For each pattern, extract the function call and then parse it properly
     patterns.forEach(pattern => {
         let match;
         while ((match = pattern.exec(content)) !== null) {
-            const key = match[1];
-            if (!translationKeys.includes(key)) {
+            const funcCall = match[1];
+
+            // Extract the key from the function call
+            const key = extractKeyFromFunctionCall(funcCall);
+            if (key && !translationKeys.includes(key)) {
                 translationKeys.push(key);
             }
         }
     });
 
     return translationKeys.sort();
+}
+
+// Helper function to properly extract key from function calls like __('key') or trans('key', [...])
+function extractKeyFromFunctionCall(funcCall: string): string | null {
+    // Find the opening parenthesis
+    const parenIndex = funcCall.indexOf('(');
+    if (parenIndex === -1) return null;
+
+    let pos = parenIndex + 1;
+
+    // Skip whitespace
+    while (pos < funcCall.length && /\s/.test(funcCall[pos])) {
+        pos++;
+    }
+
+    if (pos >= funcCall.length) return null;
+
+    const quoteChar = funcCall[pos];
+    if (quoteChar !== '"' && quoteChar !== "'" && quoteChar !== '`') return null;
+
+    // Extract the key
+    let key = '';
+    pos++; // Move past opening quote
+    let escaped = false;
+
+    while (pos < funcCall.length) {
+        const char = funcCall[pos];
+
+        if (escaped) {
+            key += char;
+            escaped = false;
+        } else if (char === '\\') {
+            escaped = true;
+        } else if (char === quoteChar) {
+            // Found the closing quote
+            return key;
+        } else {
+            key += char;
+        }
+        pos++;
+    }
+
+    return null; // No closing quote found
 }
 
 async function syncTranslationFile(newKeys: string[], phpFile: string) {
@@ -109,59 +206,20 @@ function parseExistingPhpFile(content: string): TranslationData | null {
         const languages: { [key: string]: { [key: string]: string } } = {};
 
         // Extract language blocks - improved regex to handle multiline content
-        const languagePattern = /['"`]([^'"`]+)['"`]\s*=>\s*\[([\s\S]*?)\]/g;
+        const languagePattern = /(['"`])([^'"`]+)\1\s*=>\s*\[([\s\S]*?)\]/g;
         let match;
 
         while ((match = languagePattern.exec(content)) !== null) {
-            const language = match[1];
-            const keysBlock = match[2];
+            const language = match[2];
+            const keysBlock = match[3];
 
             languages[language] = {};
 
-            // Improved key-value extraction that properly handles nested quotes
-            // This will match the key, then find the corresponding value by counting quote pairs
-            const lines = keysBlock.split('\n');
+            // Parse key-value pairs from the keys block
+            const keyValuePairs = parseKeyValuePairs(keysBlock);
 
-            for (const line of lines) {
-                const trimmedLine = line.trim();
-                if (trimmedLine && !trimmedLine.startsWith('//') && trimmedLine !== '],') {
-                    // Match the key part
-                    const keyMatch = trimmedLine.match(/^['"`]([^'"`]+)['"`]\s*=>\s*/);
-                    if (keyMatch) {
-                        const key = keyMatch[1];
-                        const afterKey = trimmedLine.substring(keyMatch[0].length);
-
-                        // Extract the value by finding the matching quotes
-                        let value = '';
-                        const quoteChar = afterKey[0]; // First character should be quote
-
-                        if (quoteChar === '"' || quoteChar === "'" || quoteChar === '`') {
-                            let i = 1; // Start after opening quote
-                            let escaped = false;
-
-                            while (i < afterKey.length) {
-                                const char = afterKey[i];
-
-                                if (escaped) {
-                                    value += char;
-                                    escaped = false;
-                                } else if (char === '\\') {
-                                    escaped = true;
-                                } else if (char === quoteChar) {
-                                    // Found closing quote
-                                    break;
-                                } else {
-                                    value += char;
-                                }
-                                i++;
-                            }
-
-                            // Process escape sequences
-                            value = value.replace(/\\'/g, "'").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-                            languages[language][key] = value;
-                        }
-                    }
-                }
+            for (const [key, value] of keyValuePairs) {
+                languages[language][key] = value;
             }
         }
 
@@ -170,6 +228,144 @@ function parseExistingPhpFile(content: string): TranslationData | null {
         console.error('Error parsing PHP file:', error);
         return null;
     }
+}
+
+// Helper function to parse key-value pairs from PHP array content
+function parseKeyValuePairs(content: string): Array<[string, string]> {
+    const pairs: Array<[string, string]> = [];
+    let pos = 0;
+
+    while (pos < content.length) {
+        // Skip whitespace and newlines
+        while (pos < content.length && /\s/.test(content[pos])) {
+            pos++;
+        }
+
+        if (pos >= content.length) break;
+
+        // Check if we're at the end of the array
+        if (content[pos] === ']') break;
+
+        // Skip comments
+        if (content.substr(pos, 2) === '//') {
+            // Skip to end of line
+            while (pos < content.length && content[pos] !== '\n') {
+                pos++;
+            }
+            continue;
+        }
+
+        // Parse key
+        const keyResult = parseQuotedString(content, pos);
+        if (!keyResult) {
+            // Skip this line if we can't parse the key
+            while (pos < content.length && content[pos] !== '\n') {
+                pos++;
+            }
+            continue;
+        }
+
+        const key = keyResult.value;
+        pos = keyResult.newPos;
+
+        // Skip whitespace and look for '=>'
+        while (pos < content.length && /\s/.test(content[pos])) {
+            pos++;
+        }
+
+        if (content.substr(pos, 2) !== '=>') {
+            // Skip this line if we don't find '=>'
+            while (pos < content.length && content[pos] !== '\n') {
+                pos++;
+            }
+            continue;
+        }
+
+        pos += 2; // Skip '=>'
+
+        // Skip whitespace
+        while (pos < content.length && /\s/.test(content[pos])) {
+            pos++;
+        }
+
+        // Parse value
+        const valueResult = parseQuotedString(content, pos);
+        if (!valueResult) {
+            // Skip this line if we can't parse the value
+            while (pos < content.length && content[pos] !== '\n') {
+                pos++;
+            }
+            continue;
+        }
+
+        const value = valueResult.value;
+        pos = valueResult.newPos;
+
+        pairs.push([key, value]);
+
+        // Skip to next line or comma
+        while (pos < content.length && content[pos] !== '\n' && content[pos] !== ',') {
+            pos++;
+        }
+        if (content[pos] === ',') {
+            pos++; // Skip comma
+        }
+    }
+
+    return pairs;
+}
+
+// Helper function to parse a quoted string starting at a given position
+function parseQuotedString(content: string, startPos: number): { value: string; newPos: number } | null {
+    let pos = startPos;
+
+    // Skip whitespace
+    while (pos < content.length && /\s/.test(content[pos])) {
+        pos++;
+    }
+
+    if (pos >= content.length) return null;
+
+    const quoteChar = content[pos];
+    if (quoteChar !== '"' && quoteChar !== "'" && quoteChar !== '`') return null;
+
+    pos++; // Move past opening quote
+    let value = '';
+    let escaped = false;
+
+    while (pos < content.length) {
+        const char = content[pos];
+
+        if (escaped) {
+            // Handle escaped characters
+            if (char === 'n') {
+                value += '\n';
+            } else if (char === 't') {
+                value += '\t';
+            } else if (char === 'r') {
+                value += '\r';
+            } else if (char === '\\') {
+                value += '\\';
+            } else if (char === quoteChar) {
+                value += char;
+            } else {
+                // For other escaped characters, keep them as-is
+                value += char;
+            }
+            escaped = false;
+        } else if (char === '\\') {
+            escaped = true;
+        } else if (char === quoteChar) {
+            // Found closing quote
+            pos++; // Move past closing quote
+            return { value, newPos: pos };
+        } else {
+            value += char;
+        }
+        pos++;
+    }
+
+    return null; // No closing quote found
 }
 
 function mergeTranslationKeys(existingData: TranslationData, newKeys: string[]): TranslationData {
@@ -214,13 +410,14 @@ function generatePhpFileFromData(data: TranslationData): string {
 
         const keys = Object.keys(data.languages[lang]).sort();
         keys.forEach(key => {
-            // 正确处理包含单引号、双引号和HTML标签的值
-            let value = data.languages[lang][key];
+            const value = data.languages[lang][key];
 
-            // 转义反斜杠和单引号
-            value = value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            // Use double quotes for both key and value to avoid escaping issues with single quotes
+            // Escape backslashes and double quotes only
+            const escapedKey = key.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            const escapedValue = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
-            phpContent.push(`        '${key}' => '${value}',`);
+            phpContent.push(`        "${escapedKey}" => "${escapedValue}",`);
         });
 
         phpContent.push('    ]' + (index < languages.length - 1 ? ',' : ''));
