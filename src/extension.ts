@@ -47,90 +47,18 @@ async function autoGenerateTranslationFile(document: vscode.TextDocument) {
 function extractTranslationKeys(content: string): string[] {
     const translationKeys: string[] = [];
 
-    // Helper function to extract keys from a specific pattern
-    function extractKeysFromPattern(pattern: RegExp, content: string) {
-        let match;
-        while ((match = pattern.exec(content)) !== null) {
-            // Find the opening quote after the function name
-            const afterFunc = match[0];
-            const funcName = match[1]; // __ or trans or lang
+    // 只定位函数调用的开头，再逐字符解析引号内的内容，
+    // 这样键里包含逗号、括号、感叹号、分号等符号时也能正确提取
+    // 覆盖: __('...'), trans('...'), @lang('...')，无论在 {{ }}、{!! !!} 还是 PHP 代码中
+    const callPattern = /(?<![\w$])(?:__|trans|@lang)\s*\(/g;
 
-            // Find where the actual quote starts
-            const quoteStart = afterFunc.indexOf('(') + 1;
-            let pos = quoteStart;
-
-            // Skip whitespace
-            while (pos < afterFunc.length && /\s/.test(afterFunc[pos])) {
-                pos++;
-            }
-
-            if (pos >= afterFunc.length) continue;
-
-            const quoteChar = afterFunc[pos]; // Get the quote character
-            if (quoteChar !== '"' && quoteChar !== "'" && quoteChar !== '`') continue;
-
-            // Extract the key by finding the matching closing quote
-            let key = '';
-            pos++; // Move past opening quote
-            let escaped = false;
-
-            while (pos < afterFunc.length) {
-                const char = afterFunc[pos];
-
-                if (escaped) {
-                    key += char;
-                    escaped = false;
-                } else if (char === '\\') {
-                    escaped = true;
-                } else if (char === quoteChar) {
-                    // Found closing quote - make sure it's not inside nested quotes
-                    break;
-                } else {
-                    key += char;
-                }
-                pos++;
-            }
-
-            if (key && !translationKeys.includes(key)) {
-                translationKeys.push(key);
-            }
+    let match;
+    while ((match = callPattern.exec(content)) !== null) {
+        const key = extractKeyFromFunctionCall(content.slice(match.index));
+        if (key && !translationKeys.includes(key)) {
+            translationKeys.push(key);
         }
     }
-
-    // More robust patterns that capture the entire function call
-    const patterns = [
-        // {{ __('...') }} and {{ __('...', [...]) }}
-        /\{\{\s*(__\([^}]+\))\s*\}\}/g,
-
-        // @lang('...') and @lang('...', [...])
-        /@(lang\([^)]+\))/g,
-
-        // {{ trans('...') }} and {{ trans('...', [...]) }}
-        /\{\{\s*(trans\([^}]+\))\s*\}\}/g,
-
-        // {!! __('...') !!} and {!! __('...', [...]) !!}
-        /\{!!\s*(__\([^!]+\))\s*!!\}/g,
-
-        // __('...') and __('...', [...]) - standalone usage
-        /(?<!\w)(__\([^;,\n\r]*\))/g,
-
-        // trans('...') and trans('...', [...]) - standalone usage
-        /(?<!\w)(trans\([^;,\n\r]*\))/g
-    ];
-
-    // For each pattern, extract the function call and then parse it properly
-    patterns.forEach(pattern => {
-        let match;
-        while ((match = pattern.exec(content)) !== null) {
-            const funcCall = match[1];
-
-            // Extract the key from the function call
-            const key = extractKeyFromFunctionCall(funcCall);
-            if (key && !translationKeys.includes(key)) {
-                translationKeys.push(key);
-            }
-        }
-    });
 
     return translationKeys.sort();
 }
@@ -184,7 +112,12 @@ async function syncTranslationFile(newKeys: string[], phpFile: string) {
         const phpContent = fs.readFileSync(phpFile, 'utf8');
         let existingData = parseExistingPhpFile(phpContent);
 
-        // 如果文件为空或无法解析，创建一个新的翻译结构
+        // 文件里已有内容但一个语言块都解析不出来（例如 array() 写法），不要覆盖，避免丢失翻译
+        if ((!existingData || Object.keys(existingData.languages).length === 0) && phpContent.includes('=>')) {
+            throw new Error('无法解析现有翻译文件格式，已跳过写入以免丢失翻译');
+        }
+
+        // 如果文件为空，创建一个新的翻译结构
         if (!existingData) {
             existingData = {
                 languages: {} // 空的语言对象
@@ -205,22 +138,24 @@ function parseExistingPhpFile(content: string): TranslationData | null {
     try {
         const languages: { [key: string]: { [key: string]: string } } = {};
 
-        // Extract language blocks - improved regex to handle multiline content
-        const languagePattern = /(['"`])([^'"`]+)\1\s*=>\s*\[([\s\S]*?)\]/g;
+        // 只用正则定位语言块开头，块内容交给逐字符解析器，
+        // 避免翻译内容里的 "]" 被误当作语言块结束
+        const languagePattern = /(['"`])([^'"`]+)\1\s*=>\s*\[/g;
         let match;
 
         while ((match = languagePattern.exec(content)) !== null) {
             const language = match[2];
-            const keysBlock = match[3];
 
             languages[language] = {};
 
             // Parse key-value pairs from the keys block
-            const keyValuePairs = parseKeyValuePairs(keysBlock);
+            const { pairs, endPos } = parseKeyValuePairs(content, languagePattern.lastIndex);
 
-            for (const [key, value] of keyValuePairs) {
+            for (const [key, value] of pairs) {
                 languages[language][key] = value;
             }
+
+            languagePattern.lastIndex = endPos;
         }
 
         return { languages };
@@ -231,9 +166,9 @@ function parseExistingPhpFile(content: string): TranslationData | null {
 }
 
 // Helper function to parse key-value pairs from PHP array content
-function parseKeyValuePairs(content: string): Array<[string, string]> {
+function parseKeyValuePairs(content: string, startPos: number): { pairs: Array<[string, string]>; endPos: number } {
     const pairs: Array<[string, string]> = [];
-    let pos = 0;
+    let pos = startPos;
 
     while (pos < content.length) {
         // Skip whitespace and newlines
@@ -312,7 +247,7 @@ function parseKeyValuePairs(content: string): Array<[string, string]> {
         }
     }
 
-    return pairs;
+    return { pairs, endPos: pos };
 }
 
 // Helper function to parse a quoted string starting at a given position
@@ -413,9 +348,9 @@ function generatePhpFileFromData(data: TranslationData): string {
             const value = data.languages[lang][key];
 
             // Use double quotes for both key and value to avoid escaping issues with single quotes
-            // Escape backslashes and double quotes only
-            const escapedKey = key.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-            const escapedValue = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            // Escape backslashes, double quotes and $ (PHP would interpolate variables in double quotes)
+            const escapedKey = escapePhpDoubleQuoted(key);
+            const escapedValue = escapePhpDoubleQuoted(value);
 
             phpContent.push(`        "${escapedKey}" => "${escapedValue}",`);
         });
@@ -429,6 +364,10 @@ function generatePhpFileFromData(data: TranslationData): string {
     phpContent.push('];');
 
     return phpContent.join('\n') + '\n';
+}
+
+function escapePhpDoubleQuoted(str: string): string {
+    return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$');
 }
 
 interface TranslationData {
